@@ -1,0 +1,289 @@
+###########################################################################
+#                         jvm11-server.options                            #
+#                                                                         #
+# See jvm-server.options. This file is specific for Java 11 and newer.    #
+###########################################################################
+
+#################
+#  GC SETTINGS  #
+#################
+
+
+
+### CMS Settings
+#-XX:+UseConcMarkSweepGC
+#-XX:+CMSParallelRemarkEnabled
+#-XX:SurvivorRatio=8
+#-XX:MaxTenuringThreshold=1
+#-XX:CMSInitiatingOccupancyFraction=75
+#-XX:+UseCMSInitiatingOccupancyOnly
+#-XX:CMSWaitDuration=10000
+#-XX:+CMSParallelInitialMarkEnabled
+#-XX:+CMSEdenChunksRecordAlways
+## some JVMs will fill up their heap when accessed via JMX, see CASSANDRA-6541
+#-XX:+CMSClassUnloadingEnabled
+
+
+
+### G1 Settings
+## Use the Hotspot garbage-first collector.
+#-XX:+UseG1GC
+#-XX:+ParallelRefProcEnabled
+
+#Haoran comment
+-XX:-AlwaysPreTouch 
+
+
+#
+## Have the JVM do less remembered set work during STW, instead
+## preferring concurrent GC. Reduces p99.9 latency.
+# Memliner -
+# Time spent on processing RemSet during STW GC.
+# Decreasing this value leads to more work finished in concurrent cycles.
+# The default value is 10.
+#-XX:G1RSetUpdatingPauseTimePercent=5
+
+# Memliner
+# Precent concurrent GC
+#Haoran comment
+#-XX:G1RSetUpdatingPauseTimePercent=20
+
+#
+## Main G1GC tunable: lowering the pause target will lower throughput and vise versa.
+## 200ms is the JVM default and lowest viable setting
+## 1000ms increases throughput. Keep it smaller than the timeouts in cassandra.yaml.
+#-XX:MaxGCPauseMillis=500
+
+## Optional G1 Settings
+# Save CPU time on large (>= 16GB) heaps by delaying region scanning
+# until the heap is 70% full. The default in Hotspot 8u40 is 40%.
+# Memliner  
+# When the memory usage of Old gen reaches the threshold here,
+# a concurrent marking will be triggered.
+#Haoran comment
+#-XX:-G1UseAdaptiveIHOP
+
+#-XX:InitiatingHeapOccupancyPercent=40
+
+# Memliner
+# Simulate the disable GC
+# Trigger a concurrent GC to relcaim the old gen and prevent the Full-GC
+#Haoran comment
+#-XX:InitiatingHeapOccupancyPercent=85
+
+# For systems with > 8 cores, the default ParallelGCThreads is 5/8 the number of logical cores.
+# Otherwise equal to the number of cores when 8 or less.
+# Machines with > 10 cores should try setting these to <= full cores.
+#Haoran comment
+#-XX:ParallelGCThreads=16
+# By default, ConcGCThreads is 1/4 of ParallelGCThreads.
+# Setting both to the same value can reduce STW durations.
+#-XX:ConcGCThreads=16
+#Haoran comment
+#-XX:ConcGCThreads=4
+
+
+
+
+
+### JPMS
+
+-Djdk.attach.allowAttachSelf=true
+--add-exports java.base/jdk.internal.misc=ALL-UNNAMED
+--add-exports java.base/jdk.internal.ref=ALL-UNNAMED
+--add-exports java.base/sun.nio.ch=ALL-UNNAMED
+--add-exports java.management.rmi/com.sun.jmx.remote.internal.rmi=ALL-UNNAMED
+--add-exports java.rmi/sun.rmi.registry=ALL-UNNAMED
+--add-exports java.rmi/sun.rmi.server=ALL-UNNAMED
+--add-exports java.sql/java.sql=ALL-UNNAMED
+
+--add-opens java.base/java.lang.module=ALL-UNNAMED
+--add-opens java.base/jdk.internal.loader=ALL-UNNAMED
+--add-opens java.base/jdk.internal.ref=ALL-UNNAMED
+--add-opens java.base/jdk.internal.reflect=ALL-UNNAMED
+--add-opens java.base/jdk.internal.math=ALL-UNNAMED
+--add-opens java.base/jdk.internal.module=ALL-UNNAMED
+--add-opens java.base/jdk.internal.util.jar=ALL-UNNAMED
+--add-opens jdk.management/com.sun.management.internal=ALL-UNNAMED
+
+
+### GC logging options -- uncomment to enable
+
+# Java 11 (and newer) GC logging options:
+# See description of https://bugs.openjdk.java.net/browse/JDK-8046148 for details about the syntax
+# The following is the equivalent to -XX:+PrintGCDetails -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=10M
+#-Xlog:gc=info,heap*=trace,age*=debug,safepoint=info,promotion*=trace:file=/var/log/cassandra/gc.log:time,uptime,pid,tid,level:filecount=10,filesize=10485760
+
+# Notes for Java 8 migration:
+#
+# -XX:+PrintGCDetails                   maps to -Xlog:gc*:... - i.e. add a '*' after "gc"
+# -XX:+PrintGCDateStamps                maps to decorator 'time'
+#
+# -XX:+PrintHeapAtGC                    maps to 'heap' with level 'trace'
+# -XX:+PrintTenuringDistribution        maps to 'age' with level 'debug'
+# -XX:+PrintGCApplicationStoppedTime    maps to 'safepoint' with level 'info'
+# -XX:+PrintPromotionFailure            maps to 'promotion' with level 'trace'
+# -XX:PrintFLSStatistics=1              maps to 'freelist' with level 'trace'
+
+# The newline in the end of file is intentional
+
+
+
+
+
+
+
+
+
+# local baseline:
+#-XX:+UseG1GC
+#-Xms32g
+#-Xmx32g
+#-XX:-UseCompressedOops
+#-XX:MetaspaceSize=128M 
+#-XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M
+#-XX:+PrintGCDetails
+
+
+# 9g baseline:
+#-XX:+UseG1GC
+#-Xms32g
+#-Xmx32g
+#-XX:-UseCompressedOops
+#-XX:MetaspaceSize=128M 
+#-XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M
+#-XX:+PrintGCDetails
+#-XX:MaxNewSize=4g
+
+# 5g baseline:
+#-XX:+UseG1GC
+#-Xms32g
+#-Xmx32g
+#-XX:-UseCompressedOops
+#-XX:MetaspaceSize=128M 
+#-XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M
+#-XX:+PrintGCDetails
+#-XX:MaxNewSize=2g
+
+
+#9g memliner insertintensive: no conc
+#-XX:+UseG1GC
+#-Xms32g
+#-Xmx32g
+#-XX:-UseCompressedOops
+#-XX:MetaspaceSize=96M 
+#-XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M
+#-XX:+PrintGCDetails
+#-XX:MaxNewSize=4g
+#-XX:ParallelGCThreads=16 
+
+
+#9g memliner insertupdate: no rebuild
+#-XX:+UseG1GC
+#-Xms32g
+#-Xmx32g
+#-XX:-UseCompressedOops
+#-XX:MetaspaceSize=96M 
+#-XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M
+#-XX:+PrintGCDetails
+#-XX:MaxNewSize=4g
+#-XX:ParallelGCThreads=16 
+#-XX:InitiatingHeapOccupancyPercent=80
+#-Xnoclassgc 
+#-XX:ConcGCThreads=2 
+#-XX:PrefetchThreads=1 
+#-XX:PrefetchNum=1024
+#-XX:PrefetchSize=100000 
+#-XX:PrefetchQueueThreshold=0 
+#-XX:G1PrefetchBufferSize=1024
+
+#9g memliner insertall: no rebuild (rerun after load)
+#-XX:+UseG1GC
+#-Xms32g
+#-Xmx32g
+#-XX:-UseCompressedOops
+#-XX:MetaspaceSize=96M 
+#-XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M
+#-XX:+PrintGCDetails
+#-XX:MaxNewSize=4g
+#-XX:ParallelGCThreads=16 
+#-XX:InitiatingHeapOccupancyPercent=75 
+#-Xnoclassgc 
+#-XX:ConcGCThreads=2 
+#-XX:PrefetchThreads=1 
+#-XX:PrefetchNum=1024 
+#-XX:PrefetchSize=100000 
+#-XX:PrefetchQueueThreshold=0 
+#-XX:G1PrefetchBufferSize=1024
+
+
+#5g memliner insertall: no rebuild (rerun after load)
+#-XX:+UseG1GC -Xms32g -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=96M  -XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M -XX:+PrintGCDetails -XX:MaxNewSize=2g -XX:ParallelGCThreads=16 -XX:InitiatingHeapOccupancyPercent=75 
+#-Xnoclassgc  -XX:ConcGCThreads=2  -XX:PrefetchThreads=1  -XX:PrefetchNum=1024  -XX:PrefetchSize=100000 
+#-XX:PrefetchQueueThreshold=0 -XX:G1PrefetchBufferSize=1024
+
+
+#5g memliner insertintensive: no conc
+#-XX:+UseG1GC -Xms32g -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=96M -XX:MarkStackSize=64M 
+#-XX:MarkStackSizeMax=64M -XX:+PrintGCDetails -XX:MaxNewSize=4g -XX:ParallelGCThreads=16 
+
+#5g memliner insertintensive: no rebuild havedone<3
+#-XX:+UseG1GC -Xms32g -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=96M  -XX:MarkStackSize=64M  
+#-XX:MarkStackSizeMax=64M -XX:+PrintGCDetails -XX:MaxNewSize=2g -XX:ParallelGCThreads=16  
+#-XX:InitiatingHeapOccupancyPercent=83  -Xnoclassgc  -XX:ConcGCThreads=2  -XX:PrefetchThreads=1  
+#-XX:PrefetchNum=16384  -XX:PrefetchSize=1000000 -XX:PrefetchQueueThreshold=0  -XX:G1PrefetchBufferSize=1024
+
+#5g memliner insertall: no rebuild
+#-XX:+UseG1GC -Xms32g -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=96M  -XX:MarkStackSize=64M  
+#-XX:MarkStackSizeMax=64M -XX:+PrintGCDetails -XX:MaxNewSize=2g -XX:ParallelGCThreads=16  
+#-XX:InitiatingHeapOccupancyPercent=70  -Xnoclassgc  -XX:ConcGCThreads=2  -XX:PrefetchThreads=1  
+#-XX:PrefetchNum=16384  -XX:PrefetchSize=1000000 -XX:PrefetchQueueThreshold=0  -XX:G1PrefetchBufferSize=1024
+
+#5g memliner insertupdate: no rebuild
+#-XX:+UseG1GC -Xms32g -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=96M  -XX:MarkStackSize=64M  
+#-XX:MarkStackSizeMax=64M -XX:+PrintGCDetails -XX:MaxNewSize=2g -XX:ParallelGCThreads=16  
+#-XX:InitiatingHeapOccupancyPercent=70  -Xnoclassgc  -XX:ConcGCThreads=2  -XX:PrefetchThreads=1  
+#-XX:PrefetchNum=16384  -XX:PrefetchSize=1000000 -XX:PrefetchQueueThreshold=0  -XX:G1PrefetchBufferSize=1024
+
+
+
+
+
+
+
+#---------------------------------Shenandoah----------------------------------------
+
+#ii
+#-Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=128M -Xms32g -Xlog:prefetch=debug -XX:PrefetchThreads=4 -XX:PrefetchNum=8192 -XX:PrefetchSize=100000 -XX:PrefetchQueueThreshold=64 -XX:+UnlockExperimentalVMOptions -XX:ShenandoahUpdateRefsEarly=off -XX:ShenandoahLearningSteps=100 -XX:ShenandoahPrefetchBufferSize=2048 -XX:+UseShenandoahGC -XX:ParallelGCThreads=32 -XX:ConcGCThreads=32 -XX:-UseCompressedOops -XX:-ShenandoahConcurrentScanCodeRoots -Xnoclassgc -XX:ShenandoahRefProcFrequency=0 -XX:+DisableExplicitGC -XX:ShenandoahGuaranteedGCInterval=2000000 -XX:+PrintGCDetails -XX:ShenandoahInitFreeThreshold=85 -XX:ShenandoahMinFreeThreshold=45 
+#iu
+#-Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=128M -Xms32g -Xlog:prefetch=debug -XX:PrefetchThreads=4 -XX:PrefetchNum=8192 -XX:PrefetchSize=100000 -XX:PrefetchQueueThreshold=0 -XX:+UnlockExperimentalVMOptions -XX:ShenandoahLearningSteps=61 -XX:ShenandoahPrefetchBufferSize=2048 -XX:+UseShenandoahGC -XX:ParallelGCThreads=32 -XX:ConcGCThreads=32 -XX:-UseCompressedOops -XX:-ShenandoahConcurrentScanCodeRoots -Xnoclassgc -XX:ShenandoahRefProcFrequency=0 -XX:+DisableExplicitGC -XX:ShenandoahGuaranteedGCInterval=2000000 -XX:+PrintGCDetails -XX:ShenandoahInitFreeThreshold=40 -XX:ShenandoahMinFreeThreshold=25
+-Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=128M -Xms32g -Xlog:prefetch=debug -XX:PrefetchThreads=4 -XX:PrefetchNum=8192 -XX:PrefetchSize=100000 -XX:PrefetchQueueThreshold=0 -XX:+UnlockExperimentalVMOptions -XX:ShenandoahLearningSteps=30 -XX:ShenandoahPrefetchBufferSize=2048 -XX:+UseShenandoahGC -XX:ParallelGCThreads=32 -XX:ConcGCThreads=32 -XX:-UseCompressedOops -XX:-ShenandoahConcurrentScanCodeRoots -Xnoclassgc -XX:ShenandoahRefProcFrequency=0 -XX:+DisableExplicitGC -XX:ShenandoahGuaranteedGCInterval=2000000 -XX:+PrintGCDetails -XX:ShenandoahInitFreeThreshold=40 -XX:ShenandoahMinFreeThreshold=25
+
+
+#kmeans
+# -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=128M -Xms32g -Xlog:prefetch=debug -XX:PrefetchThreads=4 -XX:PrefetchNum=16384 -XX:PrefetchSize=10000000 -XX:PrefetchQueueThreshold=0 -XX:+UnlockExperimentalVMOptions -XX:ShenandoahMinFreeThreshold=25 -XX:ShenandoahPrefetchBufferSize=1024 -XX:+UseShenandoahGC -XX:ParallelGCThreads=32 -XX:ConcGCThreads=128 -XX:-UseCompressedOops -XX:-ShenandoahConcurrentScanCodeRoots -Xnoclassgc -XX:ShenandoahRefProcFrequency=0 -XX:+DisableExplicitGC -XX:ShenandoahGuaranteedGCInterval=2000000 -XX:+PrintGCDetails 
+# -XX:ShenandoahInitFreeThreshold=90 -XX:ShenandoahMinFreeThreshold=40
+
+
+
+# tc
+# -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=128M -Xms32g -Xlog:prefetch=debug -XX:PrefetchThreads=1 -XX:PrefetchNum=8192 -XX:PrefetchSize=1000000 -XX:PrefetchQueueThreshold=64 -XX:+UnlockExperimentalVMOptions -XX:ShenandoahPrefetchBufferSize=1024 -XX:+UseShenandoahGC -XX:ParallelGCThreads=32 -XX:ConcGCThreads=128 -XX:-UseCompressedOops -XX:-ShenandoahConcurrentScanCodeRoots -Xnoclassgc -XX:ShenandoahRefProcFrequency=0 -XX:+DisableExplicitGC -XX:ShenandoahGuaranteedGCInterval=2000000 -XX:+PrintGCDetails -XX:ShenandoahInitFreeThreshold=90 -XX:ShenandoahMinFreeThreshold=65 
+
+
+# gpr spr
+# -Xmx32g -XX:-UseCompressedOops -XX:MetaspaceSize=128M -Xms32g -Xlog:prefetch=debug -XX:PrefetchThreads=1 -XX:PrefetchNum=8192 -XX:PrefetchSize=1000000 -XX:PrefetchQueueThreshold=64 -XX:+UnlockExperimentalVMOptions -XX:ShenandoahPrefetchBufferSize=1024 -XX:+UseShenandoahGC -XX:ParallelGCThreads=32 -XX:ConcGCThreads=128 -XX:-UseCompressedOops -XX:-ShenandoahConcurrentScanCodeRoots -Xnoclassgc -XX:ShenandoahRefProcFrequency=0 -XX:+DisableExplicitGC -XX:ShenandoahGuaranteedGCInterval=2000000 -XX:+PrintGCDetails -XX:ShenandoahInitFreeThreshold=90 -XX:ShenandoahMinFreeThreshold=75 
+
+#90 75
+
+
+
+# Normal
+# -Xmx32g -Xms32g -XX:+UnlockExperimentalVMOptions -XX:+UseShenandoahGC -XX:-UseCompressedOops -XX:+PrintGCDetails -XX:ParallelGCThreads=16 
+
