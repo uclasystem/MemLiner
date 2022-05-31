@@ -1,7 +1,7 @@
 # MemLiner README
 
 
-MemLiner  is  a  managed  runtime  built  for  a  memory-disaggregated cluster where each managed application runson one server and uses both local memory and remote memory located on another server. When launched on MemLiner,the process fetches data from the remote server via the paging system.  MemLiner reduces the local-memory working set and improves the remote-memory prefetching by lining upthe memory accesses from application and GC threads. MemLiner is transparent to applications and can be integrated in any existing GC algorithms, such as G1 and Shenandoah. Please refer to our OSDI'22 paper, **[MemLiner](http://web.cs.ucla.edu/~harryxu/papers/memliner-osdi22.pdf)** for more details. 
+MemLiner  is  a  managed  runtime  built  for  a  memory-disaggregated cluster where each managed application runson one server and uses both local memory and remote memory located on another server. When launched on MemLiner,the process fetches data from the remote server via the paging system.  MemLiner reduces the local-memory working set and improves the remote-memory prefetching by lining upthe memory accesses from application and GC threads. MemLiner is transparent to applications and can be integrated in any existing GC algorithms, such as G1 and Shenandoah. Please refer to our OSDI'22 paper, **[MemLiner](http://web.cs.ucla.edu/~harryxu/papers/memliner-osdi22.pdf)**, for more details. 
 
 
 
