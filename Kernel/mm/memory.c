@@ -82,12 +82,11 @@
 
 #include "internal.h"
 
-// [ADC] for async prefetch.
+// [MemLienr] for async prefetch.
 #include <linux/frontswap.h>
-
-// [ADC] profile swap stats.
 #include <linux/swap_stats.h>
 #include <linux/page_idle.h>
+#include <linux/swap_global_struct_mem_layer.h>
 
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
@@ -1496,7 +1495,7 @@ int vm_insert_page(struct vm_area_struct *vma, unsigned long addr,
 	if (!page_count(page))
 		return -EINVAL;
 	if (!(vma->vm_flags & VM_MIXEDMAP)) {
-		BUG_ON(down_read_trylock(&vma->vm_mm->mmap_sem));
+		BUG_ON(down_read_trylock(&vma->vm_mm->mmap_sem)); //fail, if acquired the lock??
 		BUG_ON(vma->vm_flags & VM_PFNMAP);
 		vma->vm_flags |= VM_MIXEDMAP;
 	}
@@ -3163,6 +3162,9 @@ vm_fault_t do_swap_page_profiling(struct vm_fault *vmf, int *swap_major)
 	set_pte_at(vma->vm_mm, vmf->address, vmf->pte, pte);
 	arch_do_swap_page(vma->vm_mm, vma, vmf->address, pte, vmf->orig_pte);
 	vmf->orig_pte = pte;
+
+	//MemLiner
+	mark_page_stat(vmf->address, MAPPED);
 
 	/* ksm created a completely new copy */
 	if (unlikely(page != swapcache && swapcache)) {

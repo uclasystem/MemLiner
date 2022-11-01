@@ -2412,14 +2412,28 @@ void G1CMTask::drain_local_queue(bool partially) {
 
 	if (_task_queue->size() > target_size) {
 		G1TaskQueueEntry entry;
-		bool ret = _task_queue->pop_local(entry);
+		// bool ret = _task_queue->pop_local(entry);
+		bool ret = _task_queue->pop_global(entry);
 		while (ret) {
-			scan_task_entry(entry);
+			oop obj = entry.obj();
+			oop mask_obj = (oop)((size_t)obj & ((1ULL<<63)-1));
+			size_t page_id = ((size_t)mask_obj - SEMERU_START_ADDR)/4096;
+			if(((size_t)obj & (1ULL<<63)) || _g1h->user_buf->page_stats[page_id] == 0) {
+				G1TaskQueueEntry clean_entry = G1TaskQueueEntry::from_oop(mask_obj);
+				scan_task_entry(clean_entry);
+			}
+			else {
+				mask_obj = (oop)((size_t)obj | (1ULL<<63));
+				G1TaskQueueEntry new_entry = G1TaskQueueEntry::from_oop(mask_obj);
+				_task_queue->push(new_entry);
+			}
 			if (_task_queue->size() <= target_size || has_aborted()) {
 				ret = false;
 			} else {
-				ret = _task_queue->pop_local(entry);
+				// ret = _task_queue->pop_local(entry);
+				ret = _task_queue->pop_global(entry);
 			}
+			
 		}
 	}
 }

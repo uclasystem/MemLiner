@@ -121,6 +121,7 @@ inline void G1PFTask::process_grey_task_entry(G1TaskQueueEntry task_entry) {
       _objs_scanned ++;
     } else {
       oop obj = task_entry.obj();
+      obj = (oop)((size_t)obj & ((1ULL<<63)-1));
       if (G1PFObjArrayProcessor::should_be_sliced(obj)) {
         _words_scanned += _objArray_processor.process_obj(obj);
         _objs_scanned ++;

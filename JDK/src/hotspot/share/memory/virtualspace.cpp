@@ -641,6 +641,45 @@ ReservedHeapSpace::ReservedHeapSpace(size_t size, size_t alignment, bool large, 
   }
 }
 
+/**
+ * MemLiner
+ *  Constructor for reserving MemLiner memory pool from OS.
+ *  
+ * ReservedHeapSpace -> ReservedSpace
+ *                        initialize_sermu()
+ *                        initialize_memory_pool()
+ * 1) Reserve space from OS by mmap.
+ * 2) Register the whole memory range as RDMA buffer to CPU server.
+ * 
+ * Added by Chenxi.
+ * 
+ */   
+ReservedHeapSpace::ReservedHeapSpace(size_t size, size_t alignment, char* heap_start_addr) : ReservedSpace() {
+
+  // Heap size should be aligned to alignment, too.
+  guarantee(is_aligned(size, alignment), "set by caller");
+
+  // The normal path : non-determined start addr; non-compressed oop heap.
+  // size, allocation alignment, large_page, heap_start, executable.
+  initialize(size, alignment, false, heap_start_addr, false);  
+
+  assert(markOopDesc::encode_pointer_as_mark(_base)->decode_pointer() == _base,
+         "area must be distinguishable from marks for mark-sweep");
+  assert(markOopDesc::encode_pointer_as_mark(&_base[size])->decode_pointer() == &_base[size],
+         "area must be distinguishable from marks for mark-sweep");
+
+  // if base()!= NULL, means Java heap is reserved successfully.
+  if (base() != NULL) {
+    MemTracker::record_virtual_memory_type((address)base(), mtJavaHeap);
+  }
+
+}
+
+
+
+
+
+
 // Reserve space for code segment.  Same as Java heap only we mark this as
 // executable.
 ReservedCodeSpace::ReservedCodeSpace(size_t r_size,

@@ -1349,3 +1349,82 @@ bool Universe::release_fullgc_alot_dummy() {
 }
 
 #endif // ASSERT
+
+
+
+/**
+ * Memliner
+ *  
+ * 	Universe path :
+ * 1) Get Memory from OS at specific start address, controlled by CPU server.
+ * 
+ * Parameters:
+ * 		heap_size : Controlled by heap_size, we need to set a separate option ?
+ * 		alignment : Region size alignment, determined by -XX:SemeruMemPoolAlignment,
+ * 								also HeapRegion::SemeruGrainBytes, region_size
+ * 
+ * Added by Chenxi.
+ */
+
+ReservedSpace Universe::reserve_memliner_memory_pool(size_t heap_size, size_t alignment)
+{
+	log_info(heap)("%s, Try to request memory 0x%llx from OS at 0x%llx alignment. \n", __func__, (unsigned long long)heap_size,
+					(unsigned long long)alignment);
+
+	assert(alignment <= heap_size, "actual alignment " SIZE_FORMAT " must be within maximum heap alignment " SIZE_FORMAT, alignment,
+		   heap_size);
+
+	size_t total_reserved = align_up(heap_size, alignment);
+	assert(!UseCompressedOops || (total_reserved <= (OopEncodingHeapMax - os::vm_page_size())), "heap size is too big for compressed oops");
+
+	bool use_large_pages = UseLargePages && is_aligned(alignment, os::large_page_size());
+	assert(!UseLargePages || UseParallelGC || use_large_pages, "Wrong alignment to use large pages");
+
+	// Now create the space.
+	// ReservedHeapSpace total_rs(total_reserved, alignment, use_large_pages, AllocateHeapAt);
+	char *heap_start_addr = (char *)SEMERU_START_ADDR; // Not set the memory pool start address yet.
+	ReservedHeapSpace total_rs(total_reserved, alignment,
+							   heap_start_addr); // [X] Get virtual space from OS.
+
+	// ==> Reserve Java heap from OS successfully
+	if (total_rs.is_reserved()) {
+		assert((total_reserved == total_rs.size()) && ((uintptr_t)total_rs.base() % alignment == 0),
+			   "must be exactly of required size and alignment");
+
+		assert(total_rs.base() == heap_start_addr, "The start address must equal to the requested addr.\n");
+
+		// We are good.
+
+		// if (UseCompressedOops) {
+		// 	// Universe::initialize_heap() will reset this to NULL if unscaled
+		// 	// or zero-based narrow oops are actually used.
+		// 	// Else heap start and base MUST differ, so that NULL can be encoded nonambigous.
+		// 	Universe::set_narrow_oop_base((address)total_rs.compressed_oop_base());
+		// }
+
+		if (heap_start_addr != NULL) {
+			log_info(heap)("Successfully allocated Java heap at location 0x%llx", (unsigned long long)heap_start_addr);
+		}
+
+		// // Swap out monitor
+		// size_t data_heap_start = (size_t)heap_start_addr + RDMA_STRUCTURE_SPACE_SIZE;
+		// int ret = syscall(SYS_SWAP_STAT_RESET, data_heap_start, heap_size - RDMA_STRUCTURE_SPACE_SIZE);
+		// if (!ret) {
+		// 	log_info(semeru)("%s, Reset swap out array for range [0x%lx, 0x%lx)\n", __func__, data_heap_start,
+		// 					 (size_t)(data_heap_start + heap_size - RDMA_STRUCTURE_SPACE_SIZE));
+		// } else {
+		// 	tty->print("%s, Reset swap out array failed !! \n", __func__);
+		// }
+
+		// Reserve Java heap successfully.
+		return total_rs;
+	}
+
+	// ==> Reserve Java heap from OS failed,
+	vm_exit_during_initialization(err_msg("Could not reserve enough space for " SIZE_FORMAT "KB object heap", total_reserved / K));
+
+	// satisfy compiler
+	// ERROR path
+	ShouldNotReachHere();
+	return ReservedHeapSpace(0, 0, false);
+}

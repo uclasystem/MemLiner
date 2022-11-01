@@ -370,6 +370,7 @@
 # swap RDMA bandwidth control
 455	common	set_swap_bw_control	__x64_sys_set_swap_bw_control
 456	common	get_all_procs_swap_pkts	__x64_sys_get_all_procs_swap_pkts
+457	common	mmap_user_kernel_shared_mem __x64_sys_mmap_user_kernel_shared_mem
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

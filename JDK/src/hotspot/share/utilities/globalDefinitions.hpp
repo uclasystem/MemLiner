@@ -110,6 +110,26 @@
 #define INTX_FORMAT_W(width)  "%" #width PRIdPTR
 #define UINTX_FORMAT_W(width) "%" #width PRIuPTR
 
+// ----------------------------------------------------------------------------------------------------
+// MemLiner
+
+#define SEMERU_START_ADDR 0x400000000000UL
+
+// page status 
+enum page_stat{
+  MAPPED   = 0,
+  UNMAPPED = 1,
+  SWAPPED  = 2,
+};
+struct epoch_struct{
+  unsigned int epoch;   // the first 32 bits for epoch recording
+  unsigned int length;  // length of the page_stats
+  //unsigned int page_stats[COVERED_MEM_LENGTH];  // the epoch value for each page
+  unsigned char page_stats[];
+};
+
+
+
 //----------------------------------------------------------------------------------------------------
 // Constants
 

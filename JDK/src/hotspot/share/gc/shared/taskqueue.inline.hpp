@@ -97,6 +97,28 @@ GenericTaskQueue<E, F, N>::push(E t) {
   }
 }
 
+// template<class E, MEMFLAGS F, unsigned int N> inline bool
+// GenericTaskQueue<E, F, N>::push_back(E t) {
+//   uint localBot = _bottom;
+//   assert(localBot < N, "_bottom out of range.");
+//   idx_t top = _age.top();
+//   uint dirty_n_elems = dirty_size(localBot, top);
+//   assert(dirty_n_elems < N, "n_elems out of range.");
+//   if (dirty_n_elems < max_elems()) {
+//     // g++ complains if the volatile result of the assignment is
+//     // unused, so we cast the volatile away.  We cannot cast directly
+//     // to void, because gcc treats that as not using the result of the
+//     // assignment.  However, casting to E& means that we trigger an
+//     // unused-value warning.  So, we cast the E& to void.
+//     (void) const_cast<E&>(_elems[localBot] = t);
+//     OrderAccess::release_store(&_bottom, increment_index(localBot));
+//     TASKQUEUE_STATS_ONLY(stats.record_push());
+//     return true;
+//   } else {
+//     return push_slow(t, dirty_n_elems);
+//   }
+// }
+
 template <class E, MEMFLAGS F, unsigned int N>
 inline bool OverflowTaskQueue<E, F, N>::push(E t)
 {

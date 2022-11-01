@@ -2994,18 +2994,35 @@ int remap_vmalloc_range_partial(struct vm_area_struct *vma, unsigned long uaddr,
 
 	size = PAGE_ALIGN(size);
 
-	if (!PAGE_ALIGNED(uaddr) || !PAGE_ALIGNED(kaddr))
+	//debug
+	printk("%s, entered. vma[0x%lx, 0x%lx), pgoff 0x%lx,\n uaddr 0x%lx, kaddr 0x%lx, size 0x%lx\n",
+		__func__, vma->vm_start, vma->vm_end, vma->vm_pgoff, uaddr, (unsigned long)kaddr, size);
+
+	if (!PAGE_ALIGNED(uaddr) || !PAGE_ALIGNED(kaddr)){
+		printk("%s, Error#1, uaddr(0x%lx) or kaddr(0x%lx) is not aligned \n", 
+			__func__, uaddr, (unsigned long)kaddr);
 		return -EINVAL;
+	}
 
 	area = find_vm_area(kaddr);
-	if (!area)
+	if (!area){
+		printk("%s, Error#2, no vma found \n", __func__);
 		return -EINVAL;
+	}
 
-	if (!(area->flags & (VM_USERMAP | VM_DMA_COHERENT)))
+	if (!(area->flags & (VM_USERMAP | VM_DMA_COHERENT))){
+		printk("%s, Error#3, area->flags(%lx) lack the tag  VM_USERMAP(%x) or VM_DMA_COHERENT(%x)\n", 
+			__func__, area->flags, VM_USERMAP, VM_DMA_COHERENT);
 		return -EINVAL;
+	}
 
-	if (kaddr + size > area->addr + get_vm_area_size(area))
+	if (kaddr + size > area->addr + get_vm_area_size(area)){
+		printk("%s, Error#4, kernel mem[0x%lx, 0x%lx) exceeds the limit \n", 
+			__func__, (unsigned long)kaddr, (unsigned long)kaddr + size);
 		return -EINVAL;
+	}
+
+	pr_warn("%s, All checks passed. Going to insert the page.\n",__func__);
 
 	do {
 		struct page *page = vmalloc_to_page(kaddr);
@@ -3043,11 +3060,33 @@ EXPORT_SYMBOL(remap_vmalloc_range_partial);
 int remap_vmalloc_range(struct vm_area_struct *vma, void *addr,
 						unsigned long pgoff)
 {
+	//MemLienr debug
+	pr_warn("%s, vma[0x%lx, 0x%lx), addr 0x%lx, pgoff 0x%lx \n",
+		__func__, vma->vm_start, vma->vm_end, (unsigned long)addr, pgoff);
+	
 	return remap_vmalloc_range_partial(vma, vma->vm_start,
 					   addr + (pgoff << PAGE_SHIFT),
 					   vma->vm_end - vma->vm_start);
 }
 EXPORT_SYMBOL(remap_vmalloc_range);
+
+
+
+// int remap_vmalloc_range_memliner(struct vm_area_struct *vma, void *addr,
+// 						unsigned long pgoff)
+// {
+// 	//MemLienr debug
+// 	pr_warn("%s, vma[0x%lx, 0x%lx), addr 0x%lx, pgoff 0x%lx \n",
+// 		__func__, vma->vm_start, vma->vm_end, (unsigned long)addr, pgoff);
+	
+// 	return remap_vmalloc_range_partial(vma, vma->vm_start,
+// 					   addr,
+// 					   vma->vm_end - vma->vm_start);
+// }
+// EXPORT_SYMBOL(remap_vmalloc_range);
+
+
+
 
 /*
  * Implement a stub for vmalloc_sync_all() if the architecture chose not to

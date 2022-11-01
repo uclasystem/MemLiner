@@ -57,11 +57,11 @@ delete_old_kernel_contents () {
 install_new_kernel_contents () {
 	echo "install kernel modules"
 	sleep 1
-	sudo make -j${num_core}  modules_install
+	sudo make -j${num_core} INSTALL_MOD_STRIP=1  modules_install
 
 	echo "install kernel image"
 	sleep 1
-	sudo make -j${num_core}  install
+	sudo make -j${num_core} INSTALL_MOD_STRIP=1  install
 
 	#echo "Install uapi kernel headers to /usr/include/linux/"
 	#sudo make headers_install INSTALL_HDR_PATH=/usr

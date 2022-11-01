@@ -97,6 +97,12 @@
 #include "utilities/globalDefinitions.hpp"
 #include "utilities/stack.inline.hpp"
 
+#include <linux/kernel.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <sys/mman.h>  
+#include <sys/errno.h>
+
 size_t G1CollectedHeap::_humongous_object_threshold_in_words = 0;
 
 // INVARIANTS/NOTES
@@ -1526,6 +1532,7 @@ public:
 G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* collector_policy) :
 	CollectedHeap(),
 	_remark_reclaimed_bytes(0),
+	user_buf(NULL),
 	_have_done(0),
 	_young_gen_sampling_thread(NULL),
 	_workers(NULL),
@@ -1693,21 +1700,59 @@ jint G1CollectedHeap::initialize() {
 	Universe::check_alignment(max_byte_size, HeapRegion::GrainBytes, "g1 heap");
 	Universe::check_alignment(max_byte_size, heap_alignment, "g1 heap");
 
-	// Reserve the maximum.
 
-	// When compressed oops are enabled, the preferred heap base
-	// is calculated by subtracting the requested size from the
-	// 32Gb boundary and using the result as the base address for
-	// heap reservation. If the requested size is not aligned to
-	// HeapRegion::GrainBytes (i.e. the alignment that is passed
-	// into the ReservedHeapSpace constructor) then the actual
-	// base of the reserved heap may end up differing from the
-	// address that was requested (i.e. the preferred heap base).
-	// If this happens then we could end up using a non-optimal
-	// compressed oops mode.
+	// MemLiner heap
+	ReservedSpace heap_rs;
+  	ReservedSpace g1_rs;
 
-	ReservedSpace heap_rs = Universe::reserve_heap(max_byte_size,
-																								 heap_alignment);
+	if (MemLinerEnableMemPool) {
+		// Allocate the MemLiner heap at a fixed virtual address
+
+		// max_byte_size is also controlled by -Xmx at CPU server now.
+		heap_rs = Universe::reserve_memliner_memory_pool(max_byte_size, heap_alignment);
+		
+		user_buf = (struct epoch_struct*)mmap((char*)0x100000000000UL, max_byte_size/4096 + 1024, PROT_NONE, MAP_PRIVATE | MAP_NORESERVE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		if (user_buf == MAP_FAILED) {
+			tty->print("Reserve user_buffer, 0x%lx failed. \n",
+				0x100000000000UL);
+		} else {
+			tty->print("Reserve user_buffer: 0x%lx, bytes_len: 0x%lx \n",
+				(unsigned long)user_buf, max_byte_size/4096 + 1024);
+		}
+		user_buf = (struct epoch_struct*)mmap((char*)0x100000000000UL, max_byte_size/4096 + 1024, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0);
+		if (user_buf == MAP_FAILED) {
+			tty->print("Commit user_buffer, 0x%lx failed. \n", 0x100000000000UL);
+		} else {
+			tty->print("Commit user_buffer: 0x%lx, bytes_len: 0x%lx \n",
+				(unsigned long)user_buf, max_byte_size/4096 + 1024);
+		}
+
+		// #2 Ask kernel to fill the physical pages of the buffer
+		int ret = syscall(457, (unsigned long)user_buf, max_byte_size/4096 + 512);
+		if (ret) {
+			tty->print("syscall error, with code %d\n", ret);
+		}
+		// #3 Check the value of the allcoated data
+		tty->print("epoch %d \n",user_buf->epoch);
+		tty->print("array length %x \n", user_buf->length);
+
+	} else {
+		// The default path
+		// Reserve the maximum.
+
+		// When compressed oops are enabled, the preferred heap base
+		// is calculated by subtracting the requested size from the
+		// 32Gb boundary and using the result as the base address for
+		// heap reservation. If the requested size is not aligned to
+		// HeapRegion::GrainBytes (i.e. the alignment that is passed
+		// into the ReservedHeapSpace constructor) then the actual
+		// base of the reserved heap may end up differing from the
+		// address that was requested (i.e. the preferred heap base).
+		// If this happens then we could end up using a non-optimal
+		// compressed oops mode.
+
+		heap_rs = Universe::reserve_heap(max_byte_size, heap_alignment);
+	}
 
 	initialize_reserved_region((HeapWord*)heap_rs.base(), (HeapWord*)(heap_rs.base() + heap_rs.size()));
 
@@ -1745,7 +1790,7 @@ jint G1CollectedHeap::initialize() {
 	_hot_card_cache = new G1HotCardCache(this);
 
 	// Carve out the G1 part of the heap.
-	ReservedSpace g1_rs = heap_rs.first_part(max_byte_size);
+	g1_rs = heap_rs.first_part(max_byte_size);
 	size_t page_size = actual_reserved_page_size(heap_rs);
 	G1RegionToSpaceMapper* heap_storage =
 		G1RegionToSpaceMapper::create_heap_mapper(g1_rs,
