@@ -44,15 +44,19 @@ HeterogeneousHeapRegionManager* HeterogeneousHeapRegionManager::manager() {
 void HeterogeneousHeapRegionManager::initialize(G1RegionToSpaceMapper* heap_storage,
                                                 G1RegionToSpaceMapper* prev_bitmap,
                                                 G1RegionToSpaceMapper* next_bitmap,
+                                                G1RegionToSpaceMapper* prev_black_bitmap,
+                                                G1RegionToSpaceMapper* next_black_bitmap,
                                                 G1RegionToSpaceMapper* bot,
                                                 G1RegionToSpaceMapper* cardtable,
                                                 G1RegionToSpaceMapper* card_counts) {
-  HeapRegionManager::initialize(heap_storage, prev_bitmap, next_bitmap, bot, cardtable, card_counts);
+  HeapRegionManager::initialize(heap_storage, prev_bitmap, next_bitmap, prev_black_bitmap, next_black_bitmap, bot, cardtable, card_counts);
 
   // We commit bitmap for all regions during initialization and mark the bitmap space as special.
   // This allows regions to be un-committed while concurrent-marking threads are accessing the bitmap concurrently.
   _prev_bitmap_mapper->commit_and_set_special();
   _next_bitmap_mapper->commit_and_set_special();
+  _prev_black_bitmap_mapper->commit_and_set_special();
+  _next_black_bitmap_mapper->commit_and_set_special();
 }
 
 // expand_by() is called to grow the heap. We grow into nvdimm now.

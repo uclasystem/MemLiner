@@ -183,7 +183,7 @@ void G1ConcurrentPrefetch::reset() {
   // Reset all tasks, since different phases will use different number of active
   // threads. So, it's easiest to have all of them ready.
   for (uint i = 0; i < _max_num_tasks; ++i) {
-    _tasks[i]->reset(_cm->next_mark_bitmap());
+    _tasks[i]->reset(_cm->next_mark_bitmap(), _cm->next_black_mark_bitmap());
   }
 
   // uint max_regions = _g1h->max_regions();
@@ -194,7 +194,7 @@ void G1ConcurrentPrefetch::reset() {
 }
 
 bool G1PFTask::should_exit_termination() {
-  return !_cm->concurrent();
+  return !_cm->in_conc_mark_from_roots() || has_aborted();
 }
 
 void G1ConcurrentPrefetch::clear_statistics_in_region(uint region_idx) {
@@ -313,7 +313,7 @@ public:
             index--;
           }
           bool get_queue = 0;
-          while(_cm->concurrent()) {
+          while(_cm->in_conc_mark_from_roots() && !_cm->has_aborted()) {
             if(t == NULL) {
               jtiwh.rewind();
               t = jtiwh.next();
@@ -334,25 +334,35 @@ public:
           }
           if(get_queue) {
             void* ptr;
-            bool ret = prefetch_queue->dequeue(&ptr);
-            while (ret && ptr != NULL) {
-              if(!G1CollectedHeap::heap()->is_in_g1_reserved(ptr)) break;
-              bool success = task->make_reference_grey((oop)(HeapWord*)ptr);
-              if(success) {
-                // log_debug(prefetch)("Succesfully mark one in PFTask!");
-              }
-              ret = prefetch_queue->dequeue(&ptr);
-            }
+            {
+              MutexLockerEx z(prefetch_queue->locker(), Mutex::_no_safepoint_check_flag);
+              bool ret = prefetch_queue->dequeue_no_lock(&ptr);
+              while (ret && ptr != NULL) {
+                if(!G1CollectedHeap::heap()->is_in_g1_reserved(ptr)) break;
+                // bool success = task->make_prefetch_reference_black((oop)(HeapWord*)ptr);
+                bool success = task->make_reference_grey((oop)(HeapWord*)ptr);
+
+                if(success) {
+                  // log_debug(prefetch)("Succesfully mark one in PFTask!");
+                }
+                ret = prefetch_queue->dequeue_no_lock(&ptr);
+               }
+             }
             prefetch_queue->release_processing();
             task->do_marking_step();
             _pf->do_yield_check();
           }
 
-        } while (_cm->concurrent());
+        } while (_cm->in_conc_mark_from_roots() && !_cm->has_aborted() && !task->has_aborted());
       }
+
+      if ( _cm->has_aborted() || task->has_aborted() ){
+        _pf->set_has_aborted();
+      }
+
       task->record_end_time();
       log_debug(prefetch)("G1PFConcurrentPrefetchingTask duration %lf ms", task->_elapsed_time_ms);
-      guarantee(!_cm->concurrent(), "invariant");
+      // guarantee(!_cm->concurrent(), "invariant");
     }
 
     double end_vtime = os::elapsedVTime();
@@ -435,9 +445,10 @@ void G1PFTask::set_cm_oop_closure(G1PFOopClosure* cm_oop_closure) {
   _cm_oop_closure = cm_oop_closure;
 }
 
-void G1PFTask::reset(G1CMBitMap* next_mark_bitmap) {
+void G1PFTask::reset(G1CMBitMap* next_mark_bitmap, G1CMBitMap* next_black_mark_bitmap) {
   guarantee(next_mark_bitmap != NULL, "invariant");
   _next_mark_bitmap              = next_mark_bitmap;
+  _next_black_mark_bitmap              = next_black_mark_bitmap;
   // clear_region_fields();
 
   _calls                         = 0;
@@ -477,8 +488,8 @@ void G1PFTask::move_entries_to_global_stack() {
 
   if (n > 0) {
     if (!_cm->mark_stack_push(buffer)) {
-      ShouldNotReachHere();
-      //set_has_aborted();
+      // ShouldNotReachHere();
+      set_has_aborted();
     }
   }
   // This operation was quite expensive, so decrease the limits.
@@ -487,9 +498,9 @@ void G1PFTask::move_entries_to_global_stack() {
 
 
 void G1PFTask::drain_local_queue(bool partially) {
-  // if (has_aborted()) {
-  //   return;
-  // }
+  if (has_aborted()) {
+    return;
+  }
   size_t max_num_objects = PrefetchNum;
   size_t max_size = PrefetchSize;
   
@@ -502,15 +513,34 @@ void G1PFTask::drain_local_queue(bool partially) {
   //     ret = _task_queue->pop_global(entry);
   //   }
   // }
-  while(_words_scanned < max_size && _objs_scanned < max_num_objects && !_cm->has_aborted()) {
+  while(_words_scanned < max_size && _objs_scanned < max_num_objects && !_cm->has_aborted() && !has_aborted()) {
     // bool ret = _task_queue->pop_global(entry);
     bool ret = _task_queue->pop_local(entry);
+
+    if (ret) {
+      size_t addr;
+      if(entry.is_array_slice()){
+        addr = (size_t)entry.slice();
+      }else{
+        addr = cast_from_oop<size_t>(entry.obj());
+      }
+      size_t mask_addr = addr & ((1ULL<<63)-1);
+      size_t page_id = (mask_addr - SEMERU_START_ADDR)/4096;
+      bool page_likely_local = _g1h->user_buf->page_stats[page_id] == 0;
+
+      if(page_likely_local){
+        _count_local_queue_page_local += 1;
+      } else {
+        _count_local_queue_page_remote += 1;
+      }
+    }
+
     if(ret) scan_task_entry(entry);
     else break;
   }
   if(_words_scanned>0)
     log_debug(prefetch)("_word_scanned: %lu, _objs_scanned: %lu", _words_scanned, _objs_scanned);
-  if(!_cm->has_aborted())
+  if(!_cm->has_aborted() && !has_aborted())
     move_entries_to_global_stack();
   else{
     _task_queue->set_empty();
@@ -682,7 +712,7 @@ void G1PFTask::do_marking_step() {
   // recalculate_limits();
 
   // clear all flags
-  // clear_has_aborted();
+  clear_has_aborted();
   _has_timed_out = false;
   _draining_satb_buffers = false;
 
@@ -694,6 +724,15 @@ void G1PFTask::do_marking_step() {
   G1PFOopClosure cm_oop_closure(_g1h, this);
   set_cm_oop_closure(&cm_oop_closure);
   // ...then partially drain the local queue and the global stack
+
+  if (_cm->has_overflown()) {
+    // This can happen if the mark stack overflows during a GC pause
+    // and this task, after a yield point, restarts. We have to abort
+    // as we need to get into the overflow protocol which happens
+    // right at the end of this task.
+    set_has_aborted();
+  }
+
   drain_local_queue(true);
   
   // drain_global_stack(true);
@@ -986,7 +1025,13 @@ G1PFTask::G1PFTask(uint worker_id,
   _elapsed_time_ms(0.0),
   _termination_time_ms(0.0),
   _termination_start_time_ms(0.0),
-  _marking_step_diffs_ms()
+  _marking_step_diffs_ms(),
+  _count_local_queue_page_local(0),
+  _count_local_queue_page_remote(0),
+  _count_prefetch_white(0),
+  _count_prefetch_grey(0),
+  _count_prefetch_black(0),
+  _count_steal(0)
 {
   guarantee(task_queue != NULL, "invariant");
 

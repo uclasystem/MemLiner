@@ -396,7 +396,9 @@ public:
 
   inline bool do_yield_check();
 
-//   bool has_aborted()      { return _has_aborted; }
+  bool has_aborted()            { return _has_aborted; }
+  void set_has_aborted()        { _has_aborted = true; }
+  void clear_has_aborted()      { _has_aborted = false; }
 
 //   void print_summary_info();
 
@@ -408,6 +410,10 @@ public:
   // Mark the given object on the next bitmap if it is below nTAMS.
   inline bool mark_in_next_bitmap(uint worker_id, HeapRegion* const hr, oop const obj);
   inline bool mark_in_next_bitmap(uint worker_id, oop const obj);
+  inline bool mark_prefetch_in_next_bitmap(uint worker_id, oop const obj, G1PFTask* task);
+  inline bool mark_black_in_next_bitmap(uint worker_id, oop const obj);
+
+  inline bool is_below_global_finger(oop obj) const;
 
   inline bool is_marked_in_next_bitmap(oop p) const;
 
@@ -427,6 +433,7 @@ public:
 // A class representing a marking task.
 class G1PFTask : public TerminatorTerminator {
   friend class G1PFConcurrentPrefetchingTask;
+  friend class G1ConcurrentPrefetch;
 private:
   enum PrivateConstants {
     // The regular clock call is called once the scanned words reaches
@@ -450,6 +457,7 @@ private:
   G1ConcurrentMark*           _cm;
   G1ConcurrentPrefetch*       _pf;
   G1CMBitMap*                 _next_mark_bitmap;
+  G1CMBitMap*                 _next_black_mark_bitmap;
   // the task queue of this task
   G1PFTaskQueue*              _task_queue;
 
@@ -515,6 +523,15 @@ private:
 
   TruncatedSeq                _marking_step_diffs_ms;
 
+  uint _count_local_queue_page_local;
+  uint _count_local_queue_page_remote;
+
+  uint _count_prefetch_white;
+  uint _count_prefetch_grey;
+  uint _count_prefetch_black;
+
+  uint _count_steal;
+
 //   // Updates the local fields after this task has claimed
 //   // a new region to scan
 //   void setup_for_region(HeapRegion* hr);
@@ -556,7 +573,7 @@ public:
   // scanned.
   inline size_t scan_objArray(objArrayOop obj, MemRegion mr);
   // Resets the task; should be called right at the beginning of a marking phase.
-  void reset(G1CMBitMap* next_mark_bitmap);
+  void reset(G1CMBitMap* next_mark_bitmap, G1CMBitMap* next_black_mark_bitmap);
   // // Clears all the fields that correspond to a claimed region.
   // void clear_region_fields();
 
@@ -589,9 +606,9 @@ public:
 
 //   HeapWord* finger()            { return _finger; }
 
-//   bool has_aborted()            { return _has_aborted; }
-//   void set_has_aborted()        { _has_aborted = true; }
-//   void clear_has_aborted()      { _has_aborted = false; }
+  bool has_aborted()            { return _has_aborted; }
+  void set_has_aborted()        { _has_aborted = true; }
+  void clear_has_aborted()      { _has_aborted = false; }
 
   void set_cm_oop_closure(G1PFOopClosure* cm_oop_closure);
 
@@ -602,6 +619,8 @@ public:
   // the local queue if below the finger. obj is required to be below its region's NTAMS.
   // Returns whether there has been a mark to the bitmap.
   inline bool make_reference_grey(oop obj);
+  inline bool make_reference_black(oop obj);
+  inline bool make_prefetch_reference_black(oop obj);
 
   // Grey the object (by calling make_grey_reference) if required,
   // e.g. obj is below its containing region's NTAMS.
@@ -656,6 +675,25 @@ public:
   Pair<size_t, size_t> flush_mark_stats_cache();
 //   // Prints statistics associated with this task
 //   void print_stats();
+  void clear_memliner_stats(){
+    _count_local_queue_page_local = 0;
+    _count_local_queue_page_remote = 0;
+    _count_prefetch_black = 0;
+    _count_prefetch_grey = 0;
+    _count_prefetch_white = 0;
+    _count_steal = 0;
+  }
+
+  void print_memliner_stats(){  
+    log_info(gc)(
+      "prefetcher _count_local_queue_page_local: %u _count_local_queue_page_remote: %u _count_steal: %u",
+      _count_local_queue_page_local, _count_local_queue_page_remote, _count_steal
+    );
+    log_info(gc)(
+      "prefetcher _count_prefetch_black: %u _count_prefetch_grey: %u _count_prefetch_white: %u",
+      _count_prefetch_black, _count_prefetch_grey, _count_prefetch_white
+    );
+  }
 };
 
 

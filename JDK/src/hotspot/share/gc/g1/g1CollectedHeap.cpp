@@ -1833,10 +1833,15 @@ jint G1CollectedHeap::initialize() {
 		create_aux_memory_mapper("Prev Bitmap", bitmap_size, G1CMBitMap::heap_map_factor());
 	G1RegionToSpaceMapper* next_bitmap_storage =
 		create_aux_memory_mapper("Next Bitmap", bitmap_size, G1CMBitMap::heap_map_factor());
+	G1RegionToSpaceMapper* prev_black_bitmap_storage =
+		create_aux_memory_mapper("Prev Black Bitmap", bitmap_size, G1CMBitMap::heap_map_factor());
+	G1RegionToSpaceMapper* next_black_bitmap_storage =
+		create_aux_memory_mapper("Next Black Bitmap", bitmap_size, G1CMBitMap::heap_map_factor());
+
 
 	_hrm = HeapRegionManager::create_manager(this, g1_collector_policy());
 
-	_hrm->initialize(heap_storage, prev_bitmap_storage, next_bitmap_storage, bot_storage, cardtable_storage, card_counts_storage);
+	_hrm->initialize(heap_storage, prev_bitmap_storage, next_bitmap_storage, prev_black_bitmap_storage, next_black_bitmap_storage, bot_storage, cardtable_storage, card_counts_storage);
 	_card_table->initialize(cardtable_storage);
 	// Do later initialization work for concurrent refinement.
 	_hot_card_cache->initialize(card_counts_storage);
@@ -1881,7 +1886,7 @@ jint G1CollectedHeap::initialize() {
 
 	// Create the G1ConcurrentMark data structure and thread.
 	// (Must do this late, so that "max_regions" is defined.)
-	_cm = new G1ConcurrentMark(this, prev_bitmap_storage, next_bitmap_storage);
+	_cm = new G1ConcurrentMark(this, prev_bitmap_storage, next_bitmap_storage, prev_black_bitmap_storage, next_black_bitmap_storage);
 	if (_cm == NULL || !_cm->completed_initialization()) {
 		vm_shutdown_during_initialization("Could not create/initialize G1ConcurrentMark");
 		return JNI_ENOMEM;
@@ -2216,7 +2221,7 @@ void G1CollectedHeap::increment_old_marking_cycles_completed(bool concurrent) {
 	if (concurrent) {
 		_cm_thread->set_idle();
 		// Haoran: Modify
-		_pf_thread->set_idle();
+		// _pf_thread->set_idle();
 	}
 
 	// This notify_all() will ensure that a thread that called
@@ -2777,9 +2782,9 @@ HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
 void G1CollectedHeap::do_concurrent_mark() {
 	MutexLockerEx x(CGC_lock, Mutex::_no_safepoint_check_flag);
 	if (!_cm_thread->in_progress()) {
+		concurrent_mark()->clear_bitmap(concurrent_mark()->next_black_mark_bitmap(), workers(), false);
 		_cm_thread->set_started();
 		// Haoran: modify
-		_pf_thread->set_started();
 		CGC_lock->notify();
 		// CPF_lock->notify();
 	}

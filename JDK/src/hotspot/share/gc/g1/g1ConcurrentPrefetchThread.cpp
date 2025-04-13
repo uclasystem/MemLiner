@@ -236,10 +236,12 @@ void G1ConcurrentPrefetchThread::run_service() {
     }
     // cpmanager.set_phase(G1ConcurrentPhase::CONCURRENT_CYCLE, false /* force */);
     {
+      log_info(gc)("prefetcher cycle start");
       ResourceMark rm;
       HandleMark   hm;
       double cycle_start_time = os::elapsedTime();
       double cycle_start = os::elapsedVTime();
+      _pf->clear_has_aborted();
       // It would be nice to use the G1ConcPhase class here but
       // the "end" logging is inside the loop and not at the end of
       // a scope. Also, the timer doesn't support nesting.
@@ -247,9 +249,18 @@ void G1ConcurrentPrefetchThread::run_service() {
       {
         // G1ConcPhaseManager mark_manager(G1ConcurrentPhase::CONCURRENT_MARK, this);
         jlong mark_start = os::elapsed_counter();
-        while(_cm->concurrent()) {
+        for(uint i = 0; i < PrefetchThreads; i++){
+          _pf->task(i)->clear_memliner_stats();
+        }
+
+        while(_cm->in_conc_mark_from_roots() && !_pf->has_aborted() && !_cm->has_aborted() && !_cm->has_overflown()) {
           _pf->mark_from_stacks();
         }
+
+        for(uint i = 0; i < PrefetchThreads; i++){
+          _pf->task(i)->print_memliner_stats();
+        }
+        log_info(gc)("prefetcher finish conc prefetching");
         // for (uint iter = 1; !_cm->has_aborted(); ++iter) {
         //   // Concurrent marking.
         //   {
@@ -316,6 +327,10 @@ void G1ConcurrentPrefetchThread::run_service() {
       // g1h->increment_old_marking_cycles_completed(true /* concurrent */);
       set_idle();
       // _cm->concurrent_cycle_end();
+    }
+    {
+      MutexLockerEx ml(CCM_finish_lock, Mutex::_no_safepoint_check_flag);
+      CCM_finish_lock->notify();
     }
     // cpmanager.set_phase(G1ConcurrentPhase::IDLE, _cm->has_aborted() /* force */);
   }

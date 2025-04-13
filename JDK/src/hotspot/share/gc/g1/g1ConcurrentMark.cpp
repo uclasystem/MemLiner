@@ -39,6 +39,8 @@
 #include "gc/g1/heapRegion.inline.hpp"
 #include "gc/g1/heapRegionRemSet.hpp"
 #include "gc/g1/heapRegionSet.inline.hpp"
+#include "gc/g1/g1ConcurrentPrefetchThread.hpp"
+#include "gc/g1/g1ConcurrentPrefetchThread.inline.hpp"
 #include "gc/shared/gcId.hpp"
 #include "gc/shared/gcTimer.hpp"
 #include "gc/shared/gcTrace.hpp"
@@ -72,7 +74,23 @@ bool G1CMBitMapClosure::do_addr(HeapWord* const addr) {
 	// We move that task's local finger along.
 	_task->move_finger_to(addr);
 
-	_task->scan_task_entry(G1TaskQueueEntry::from_oop(oop(addr)));
+	size_t page_id = ((size_t)addr - SEMERU_START_ADDR)/4096;
+	bool page_likely_local = G1CollectedHeap::heap()->user_buf->page_stats[page_id] == 0;
+
+
+
+	if(!_task->_next_black_mark_bitmap->is_marked(addr)){
+		if(page_likely_local){
+			_task->_count_bitmap_page_local += 1;
+		} else {
+			_task->_count_bitmap_page_remote += 1;
+		}		
+		_task->scan_task_entry(G1TaskQueueEntry::from_oop(oop(addr)));
+	} 
+	// else {
+	// 	ShouldNotReachHere();
+	// }
+
 	// we only partially drain the local queue and global stack
 	_task->drain_local_queue(true);
 	_task->drain_global_stack(true);
@@ -357,16 +375,23 @@ static uint scale_concurrent_worker_threads(uint num_gc_workers) {
 }
 
 G1ConcurrentMark::G1ConcurrentMark(G1CollectedHeap* g1h,
-																	 G1RegionToSpaceMapper* prev_bitmap_storage,
-																	 G1RegionToSpaceMapper* next_bitmap_storage) :
+									G1RegionToSpaceMapper* prev_bitmap_storage,
+									G1RegionToSpaceMapper* next_bitmap_storage,
+									G1RegionToSpaceMapper* prev_black_bitmap_storage,
+									G1RegionToSpaceMapper* next_black_bitmap_storage) :
 	// _cm_thread set inside the constructor
 	_g1h(g1h),
 	_completed_initialization(false),
 
 	_mark_bitmap_1(),
 	_mark_bitmap_2(),
+	_mark_bitmap_3(),
+	_mark_bitmap_4(),
+
 	_prev_mark_bitmap(&_mark_bitmap_1),
 	_next_mark_bitmap(&_mark_bitmap_2),
+	_prev_black_mark_bitmap(&_mark_bitmap_3),
+	_next_black_mark_bitmap(&_mark_bitmap_4),
 
 	_heap(_g1h->reserved_region()),
 
@@ -414,6 +439,8 @@ G1ConcurrentMark::G1ConcurrentMark(G1CollectedHeap* g1h,
 {
 	_mark_bitmap_1.initialize(g1h->reserved_region(), prev_bitmap_storage);
 	_mark_bitmap_2.initialize(g1h->reserved_region(), next_bitmap_storage);
+	_mark_bitmap_3.initialize(g1h->reserved_region(), prev_black_bitmap_storage);
+	_mark_bitmap_4.initialize(g1h->reserved_region(), next_black_bitmap_storage);
 
 	// Create & start ConcurrentMark thread.
 	_cm_thread = new G1ConcurrentMarkThread(this);
@@ -512,7 +539,7 @@ void G1ConcurrentMark::reset() {
 	// Reset all tasks, since different phases will use different number of active
 	// threads. So, it's easiest to have all of them ready.
 	for (uint i = 0; i < _max_num_tasks; ++i) {
-		_tasks[i]->reset(_next_mark_bitmap);
+		_tasks[i]->reset(_next_mark_bitmap, _next_black_mark_bitmap);
 	}
 
 	uint max_regions = _g1h->max_regions();
@@ -719,6 +746,7 @@ void G1ConcurrentMark::cleanup_for_next_mark() {
 	// guarantee(!_g1h->collector_state()->mark_or_rebuild_in_progress(), "invariant");
 
 	clear_bitmap(_next_mark_bitmap, _concurrent_workers, true);
+	clear_bitmap(_next_black_mark_bitmap, _concurrent_workers, true);
 
 	// Repeat the asserts from above.
 	guarantee(cm_thread()->during_cycle(), "invariant");
@@ -728,6 +756,7 @@ void G1ConcurrentMark::cleanup_for_next_mark() {
 void G1ConcurrentMark::clear_prev_bitmap(WorkGang* workers) {
 	assert_at_safepoint_on_vm_thread();
 	clear_bitmap(_prev_mark_bitmap, workers, false);
+	clear_bitmap(_prev_black_mark_bitmap, workers, false);
 }
 
 class NoteStartOfMarkHRClosure : public HeapRegionClosure {
@@ -843,6 +872,7 @@ public:
 			assert(worker_id < _cm->active_tasks(), "invariant");
 
 			G1CMTask* task = _cm->task(worker_id);
+			task->clear_memliner_stats();
 			task->record_start_time();
 			if (!_cm->has_aborted()) {
 				do {
@@ -854,6 +884,7 @@ public:
 				} while (!_cm->has_aborted() && task->has_aborted());
 			}
 			task->record_end_time();
+			task->print_memliner_stats();
 			guarantee(!task->has_aborted() || _cm->has_aborted(), "invariant");
 		}
 
@@ -1004,14 +1035,27 @@ void G1ConcurrentMark::mark_from_roots() {
 	// Parallel task terminator is set in "set_concurrency_and_phase()"
 	set_concurrency_and_phase(active_workers, true /* concurrent */);
 
+	set_in_conc_mark_from_roots(true);
 	{
 		MutexLockerEx pl(CPF_lock, Mutex::_no_safepoint_check_flag);
+		G1CollectedHeap::heap()->_pf_thread->set_started();
 		// Haoran: modify
 		CPF_lock->notify();
 	}
 	G1CMConcurrentMarkingTask marking_task(this);
 	_concurrent_workers->run_task(&marking_task);
 	print_stats();
+
+	set_in_conc_mark_from_roots(false);
+  	{
+		log_info(gc)("before CCM mark from roots finish");
+		MonitorLockerEx ml(CCM_finish_lock, Mutex::_no_safepoint_check_flag);
+		while(!G1CollectedHeap::heap()->_pf_thread->idle()){
+		ml.wait(Mutex::_no_safepoint_check_flag);
+		}
+		log_info(gc)("after CCM mark from roots finish");
+
+  	}
 }
 
 void G1ConcurrentMark::verify_during_pause(G1HeapVerifier::G1VerifyType type, VerifyOption vo, const char* caller) {
@@ -1992,13 +2036,15 @@ public:
 
 	void operator()(G1TaskQueueEntry task_entry) const {
 		if (task_entry.is_array_slice()) {
-			guarantee(_g1h->is_in_reserved(task_entry.slice()), "Slice " PTR_FORMAT " must be in heap.", p2i(task_entry.slice()));
+			size_t mask_addr = (size_t)task_entry.slice() & ((1ULL<<63)-1);
+			guarantee(_g1h->is_in_reserved((void*)mask_addr), "Slice " PTR_FORMAT " must be in heap.", p2i(task_entry.slice()));
 			return;
 		}
-		guarantee(oopDesc::is_oop(task_entry.obj()),
+		size_t mask_addr = (size_t)task_entry.obj() & ((1ULL<<63)-1);
+		guarantee(oopDesc::is_oop((oop)mask_addr),
 							"Non-oop " PTR_FORMAT ", phase: %s, info: %d",
 							p2i(task_entry.obj()), _phase, _info);
-		guarantee(!_g1h->is_in_cset(task_entry.obj()),
+		guarantee(!_g1h->is_in_cset((oop)mask_addr),
 							"obj: " PTR_FORMAT " in CSet, phase: %s, info: %d",
 							p2i(task_entry.obj()), _phase, _info);
 	}
@@ -2076,6 +2122,7 @@ void G1ConcurrentMark::concurrent_cycle_abort() {
 	{
 		GCTraceTime(Debug, gc) debug("Clear Next Bitmap");
 		clear_bitmap(_next_mark_bitmap, _g1h->workers(), false);
+		clear_bitmap(_next_black_mark_bitmap, _g1h->workers(), false);
 	}
 	// Note we cannot clear the previous marking bitmap here
 	// since VerifyDuringGC verifies the objects marked during
@@ -2238,9 +2285,11 @@ void G1CMTask::set_cm_oop_closure(G1CMOopClosure* cm_oop_closure) {
 	_cm_oop_closure = cm_oop_closure;
 }
 
-void G1CMTask::reset(G1CMBitMap* next_mark_bitmap) {
+void G1CMTask::reset(G1CMBitMap* next_mark_bitmap, G1CMBitMap* next_black_mark_bitmap) {
 	guarantee(next_mark_bitmap != NULL, "invariant");
 	_next_mark_bitmap              = next_mark_bitmap;
+	_next_black_mark_bitmap        = next_black_mark_bitmap;
+
 	clear_region_fields();
 
 	_calls                         = 0;
@@ -2415,16 +2464,40 @@ void G1CMTask::drain_local_queue(bool partially) {
 		// bool ret = _task_queue->pop_local(entry);
 		bool ret = _task_queue->pop_global(entry);
 		while (ret) {
-			oop obj = entry.obj();
-			oop mask_obj = (oop)((size_t)obj & ((1ULL<<63)-1));
-			size_t page_id = ((size_t)mask_obj - SEMERU_START_ADDR)/4096;
-			if(((size_t)obj & (1ULL<<63)) || _g1h->user_buf->page_stats[page_id] == 0) {
-				G1TaskQueueEntry clean_entry = G1TaskQueueEntry::from_oop(mask_obj);
-				scan_task_entry(clean_entry);
+			//shengkai distinguish slice/obj
+			size_t addr;
+			if(entry.is_array_slice()){
+				addr = (size_t)entry.slice();
+			}else{
+				addr = (size_t)entry.obj();
+ 			}
+			size_t mask_addr = addr & ((1ULL<<63)-1);
+			size_t page_id = (mask_addr - SEMERU_START_ADDR)/4096;
+
+			bool page_likely_local = G1CollectedHeap::heap()->user_buf->page_stats[page_id] == 0;
+
+			if(page_likely_local){
+				_count_local_queue_page_local += 1;
+			} else {
+				_count_local_queue_page_remote += 1;
 			}
-			else {
-				mask_obj = (oop)((size_t)obj | (1ULL<<63));
-				G1TaskQueueEntry new_entry = G1TaskQueueEntry::from_oop(mask_obj);
+
+			if((addr & (1ULL<<63)) || _g1h->user_buf->page_stats[page_id] == 0) {
+				G1TaskQueueEntry clean_entry;
+				if(entry.is_array_slice()){
+					clean_entry = G1TaskQueueEntry::from_slice((HeapWord *)mask_addr);
+				}else{
+					clean_entry = G1TaskQueueEntry::from_oop((oop)mask_addr);
+				}
+				scan_task_entry(clean_entry);
+			} else {
+				mask_addr = addr | (1ULL<<63);
+				G1TaskQueueEntry new_entry;
+				if(entry.is_array_slice()){
+					new_entry = G1TaskQueueEntry::from_slice((HeapWord *)mask_addr);
+				}else{
+					new_entry = G1TaskQueueEntry::from_oop((oop)mask_addr);
+				}
 				_task_queue->push(new_entry);
 			}
 			if (_task_queue->size() <= target_size || has_aborted()) {
@@ -2826,7 +2899,7 @@ void G1CMTask::do_marking_step(double time_target_ms,
 	drain_global_stack(false);
 
 	// Attempt at work stealing from other task's queues.
-	if (do_stealing && !has_aborted()) {
+	if (do_stealing && !has_aborted() && false) {
 		// We have not aborted. This means that we have finished all that
 		// we could. Let's try to do some stealing...
 
@@ -2837,7 +2910,21 @@ void G1CMTask::do_marking_step(double time_target_ms,
 		while (!has_aborted()) {
 			G1TaskQueueEntry entry;
 			if (_cm->try_stealing(_worker_id, entry)) {
-				scan_task_entry(entry);
+                //shengkai clear mask before scan
+                size_t addr;
+            	if(entry.is_array_slice()){
+                        addr = (size_t)entry.slice();
+            	}else{
+            	        addr = (size_t)entry.obj();
+                }
+            	size_t mask_addr = addr & ((1ULL<<63)-1);
+                G1TaskQueueEntry clean_entry;
+                if(entry.is_array_slice()){
+                    clean_entry = G1TaskQueueEntry::from_slice((HeapWord *)mask_addr);
+                }else{
+                    clean_entry = G1TaskQueueEntry::from_oop((oop)mask_addr);
+                }
+                scan_task_entry(clean_entry);
 
 				// And since we're towards the end, let's totally drain the
 				// local queue and global stack.
@@ -2917,11 +3004,26 @@ void G1CMTask::do_marking_step(double time_target_ms,
 			if (!is_serial) {
 				// We only need to enter the sync barrier if being called
 				// from a parallel context
+				if( _worker_id == 0){
+					log_info(gc)("before CCM overflow handle");
+					MonitorLockerEx ml(CCM_finish_lock, Mutex::_no_safepoint_check_flag);
+					while(!G1CollectedHeap::heap()->_pf_thread->idle()){
+						ml.wait(Mutex::_no_safepoint_check_flag);
+					}
+					log_info(gc)("after CCM overflow handle");
+				}
 				_cm->enter_first_sync_barrier(_worker_id);
 
 				// When we exit this sync barrier we know that all tasks have
 				// stopped doing marking work. So, it's now safe to
 				// re-initialize our data structures.
+			} else {
+				log_info(gc)("before CCM overflow handle");
+				MonitorLockerEx ml(CCM_finish_lock, Mutex::_no_safepoint_check_flag);
+				while(!G1CollectedHeap::heap()->_pf_thread->idle()){
+				ml.wait(Mutex::_no_safepoint_check_flag);
+				}
+				log_info(gc)("after CCM overflow handle");
 			}
 
 			clear_region_fields();
@@ -2986,7 +3088,17 @@ G1CMTask::G1CMTask(uint worker_id,
 	_elapsed_time_ms(0.0),
 	_termination_time_ms(0.0),
 	_termination_start_time_ms(0.0),
-	_marking_step_diffs_ms()
+	_marking_step_diffs_ms(),
+	_count_local_queue_page_local(0),
+	_count_local_queue_page_remote(0),  
+	_count_scan_stat_0(0),
+	_count_scan_stat_1(0),
+	_count_scan(0),
+	_count_push_back(0),
+	// _count_global_queue_page_local(0),
+	// _count_global_queue_page_remote(0),  
+	_count_bitmap_page_local(0),
+	_count_bitmap_page_remote(0)
 {
 	guarantee(task_queue != NULL, "invariant");
 

@@ -571,9 +571,11 @@ void G1BarrierSetAssembler::generate_c1_post_barrier_runtime_stub(StubAssembler*
   __ testptr(tmp2, tmp2);
   __ jcc(Assembler::zero, prefetch_runtime);
   __ subptr(tmp2, wordSize);
-  __ movptr(prefetch_queue_index, tmp2);
+  // __ movptr(prefetch_queue_index, tmp2);
   __ addptr(tmp2, prefetch_buffer);
   __ movptr(Address(tmp2, 0), new_val);
+  __ subptr(tmp2, prefetch_buffer);
+  __ movptr(prefetch_queue_index, tmp2);
 
   __ jmp(prefetch_done);
   __ bind(prefetch_runtime);

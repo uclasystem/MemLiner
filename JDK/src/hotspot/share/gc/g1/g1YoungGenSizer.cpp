@@ -64,9 +64,9 @@ G1YoungGenSizer::G1YoungGenSizer() : _sizer_kind(SizerDefaults),
       _sizer_kind = SizerNewSizeOnly;
     }
   } else if (FLAG_IS_CMDLINE(MaxNewSize)) {
-    if(MaxNewSize > (1024 + 512) * 1024 * 1024) {
-      MaxNewSize -= 1024 * 1024 * 1024;
-    }
+    // if(MaxNewSize > (1024 + 512) * 1024 * 1024) {
+    //   MaxNewSize -= 1024 * 1024 * 1024;
+    // }
     _max_desired_young_length =
                              MAX2((uint) (MaxNewSize / HeapRegion::GrainBytes),
                                   1U);

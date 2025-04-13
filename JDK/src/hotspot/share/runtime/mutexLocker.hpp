@@ -75,6 +75,7 @@ extern Mutex*   NonJavaThreadsList_lock;         // a lock on the NonJavaThreads
 extern Monitor* CGC_lock;                        // used for coordination between
                                                  // fore- & background GC threads.
 extern Monitor* CPF_lock;                        // Haoran: modify used for coordination between
+extern Monitor* CCM_finish_lock;                 // Haoran: modify used for coordination between
                                                  // background GC threads and background PF threads.
 extern Monitor* STS_lock;                        // used for joining/leaving SuspendibleThreadSet.
 extern Monitor* FullGCCount_lock;                // in support of "concurrent" full gc

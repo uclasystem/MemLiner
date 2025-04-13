@@ -65,6 +65,8 @@ HeapRegionManager::HeapRegionManager() :
 	_regions(), _heap_mapper(NULL),
 	_prev_bitmap_mapper(NULL),
 	_next_bitmap_mapper(NULL),
+	_prev_black_bitmap_mapper(NULL),
+	_next_black_bitmap_mapper(NULL),
 	_free_list("Free list", new MasterFreeRegionListChecker())
 { }
 
@@ -78,6 +80,8 @@ HeapRegionManager* HeapRegionManager::create_manager(G1CollectedHeap* heap, G1Co
 void HeapRegionManager::initialize(G1RegionToSpaceMapper* heap_storage,
 															 G1RegionToSpaceMapper* prev_bitmap,
 															 G1RegionToSpaceMapper* next_bitmap,
+															 G1RegionToSpaceMapper* prev_black_bitmap,
+															 G1RegionToSpaceMapper* next_black_bitmap,
 															 G1RegionToSpaceMapper* bot,
 															 G1RegionToSpaceMapper* cardtable,
 															 G1RegionToSpaceMapper* card_counts) {
@@ -87,6 +91,9 @@ void HeapRegionManager::initialize(G1RegionToSpaceMapper* heap_storage,
 
 	_prev_bitmap_mapper = prev_bitmap;
 	_next_bitmap_mapper = next_bitmap;
+
+	_prev_black_bitmap_mapper = prev_black_bitmap;
+	_next_black_bitmap_mapper = next_black_bitmap;
 
 	_bot_mapper = bot;
 	_cardtable_mapper = cardtable;
@@ -129,6 +136,9 @@ void HeapRegionManager::commit_regions(uint index, size_t num_regions, WorkGang*
 	_prev_bitmap_mapper->commit_regions(index, num_regions, pretouch_gang);
 	_next_bitmap_mapper->commit_regions(index, num_regions, pretouch_gang);
 
+	_prev_black_bitmap_mapper->commit_regions(index, num_regions, pretouch_gang);
+	_next_black_bitmap_mapper->commit_regions(index, num_regions, pretouch_gang);
+
 	_bot_mapper->commit_regions(index, num_regions, pretouch_gang);
 	_cardtable_mapper->commit_regions(index, num_regions, pretouch_gang);
 
@@ -155,6 +165,9 @@ void HeapRegionManager::uncommit_regions(uint start, size_t num_regions) {
 	// Also uncommit auxiliary data
 	_prev_bitmap_mapper->uncommit_regions(start, num_regions);
 	_next_bitmap_mapper->uncommit_regions(start, num_regions);
+
+	_prev_black_bitmap_mapper->uncommit_regions(start, num_regions);
+	_next_black_bitmap_mapper->uncommit_regions(start, num_regions);
 
 	_bot_mapper->uncommit_regions(start, num_regions);
 	_cardtable_mapper->uncommit_regions(start, num_regions);
@@ -194,6 +207,8 @@ MemoryUsage HeapRegionManager::get_auxiliary_data_memory_usage() const {
 	size_t used_sz =
 		_prev_bitmap_mapper->committed_size() +
 		_next_bitmap_mapper->committed_size() +
+		_prev_black_bitmap_mapper->committed_size() +
+		_next_black_bitmap_mapper->committed_size() +
 		_bot_mapper->committed_size() +
 		_cardtable_mapper->committed_size() +
 		_card_counts_mapper->committed_size();
@@ -201,6 +216,8 @@ MemoryUsage HeapRegionManager::get_auxiliary_data_memory_usage() const {
 	size_t committed_sz =
 		_prev_bitmap_mapper->reserved_size() +
 		_next_bitmap_mapper->reserved_size() +
+		_prev_black_bitmap_mapper->reserved_size() +
+		_next_black_bitmap_mapper->reserved_size() +
 		_bot_mapper->reserved_size() +
 		_cardtable_mapper->reserved_size() +
 		_card_counts_mapper->reserved_size();

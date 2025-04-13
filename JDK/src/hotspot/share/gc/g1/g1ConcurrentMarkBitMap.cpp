@@ -27,8 +27,10 @@
 #include "gc/g1/g1ConcurrentMarkBitMap.inline.hpp"
 #include "gc/g1/heapRegion.hpp"
 #include "memory/virtualspace.hpp"
+#include "logging/log.hpp"
 
 void G1CMBitMap::initialize(MemRegion heap, G1RegionToSpaceMapper* storage) {
+  log_info(gc)("storage is %p %p", storage->reserved().start(), storage->reserved().end());
   MarkBitMap::initialize(heap, storage->reserved());
   storage->set_mapping_changed_listener(&_listener);
 }

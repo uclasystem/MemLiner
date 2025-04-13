@@ -296,9 +296,9 @@ void G1BarrierSetC2::pre_barrier(GraphKit* kit,
             Node* prefetch_next_index = kit->gvn().transform(new SubXNode(prefetch_index, __ ConX(sizeof(intptr_t))));
             // Now get the buffer location we will log the previous value into and store it
             Node *prefetch_log_addr = __ AddP(no_base, prefetch_buffer, prefetch_next_index);
-            __ store(__ ctrl(), prefetch_log_addr, val, T_OBJECT, Compile::AliasIdxRaw, MemNode::unordered);
+            __ store(__ ctrl(), prefetch_log_addr, val, T_OBJECT, Compile::AliasIdxRaw, MemNode::release);
             // update the index
-            __ store(__ ctrl(), prefetch_index_adr, prefetch_next_index, index_bt, Compile::AliasIdxRaw, MemNode::unordered);
+            __ store(__ ctrl(), prefetch_index_adr, prefetch_next_index, index_bt, Compile::AliasIdxRaw, MemNode::release);
           } __ else_(); {
             // logging buffer is full, call the runtime
             const TypeFunc *tf = write_ref_field_prefetch_entry_Type();

@@ -235,6 +235,10 @@
           "Number of threads prefetch will use")                            \
           range(0, max_jint)                                                \
                                                                             \
+  product(uint, PrefetchDelay, 0,                                           \
+          "The number of objects before first prefetch")                    \
+          range(0, max_jint)                                                \
+                                                                            \
   product(uint, PrefetchNum, 0,                                             \
           "The maximum objects to be marked during prefetching")            \
           range(0, max_jint)                                                \

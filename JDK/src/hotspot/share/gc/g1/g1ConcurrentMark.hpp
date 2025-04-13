@@ -320,8 +320,12 @@ class G1ConcurrentMark : public CHeapObj<mtGC> {
   // Concurrent marking support structures
   G1CMBitMap              _mark_bitmap_1;
   G1CMBitMap              _mark_bitmap_2;
+  G1CMBitMap              _mark_bitmap_3;
+  G1CMBitMap              _mark_bitmap_4;
   G1CMBitMap*             _prev_mark_bitmap; // Completed mark bitmap
   G1CMBitMap*             _next_mark_bitmap; // Under-construction mark bitmap
+  G1CMBitMap*             _prev_black_mark_bitmap; // Completed mark bitmap
+  G1CMBitMap*             _next_black_mark_bitmap; // Under-construction mark bitmap
 
   // Heap bounds
   MemRegion const         _heap;
@@ -362,6 +366,7 @@ class G1ConcurrentMark : public CHeapObj<mtGC> {
   volatile bool           _has_overflown;
   // True: marking is concurrent, false: we're in remark
   volatile bool           _concurrent;
+  volatile bool           _in_conc_mark_from_roots;
   // Set at the end of a Full GC so that marking aborts
   volatile bool           _has_aborted;
 
@@ -429,8 +434,12 @@ class G1ConcurrentMark : public CHeapObj<mtGC> {
   // Prints all gathered CM-related statistics
   void print_stats();
 
+  void set_in_conc_mark_from_roots(bool status) { _in_conc_mark_from_roots = status; }
+
   HeapWord*               finger()           { return _finger;   }
   bool                    concurrent()       { return _concurrent; }
+  bool                    in_conc_mark_from_roots()   { return _in_conc_mark_from_roots; }
+
   uint                    active_tasks()     { return _num_active_tasks; }
   ParallelTaskTerminator* terminator() const { return _terminator.terminator(); }
 
@@ -468,8 +477,8 @@ class G1ConcurrentMark : public CHeapObj<mtGC> {
   // Access / manipulation of the overflow flag which is set to
   // indicate that the global stack has overflown
   bool has_overflown()           { return _has_overflown; }
-  // void set_has_overflown()       { _has_overflown = true; }
-  void set_has_overflown()       {/*Haoran: modify*/ ShouldNotReachHere(); _has_overflown = true; }
+  void set_has_overflown()       { _has_overflown = true; }
+  // void set_has_overflown()       {/*Haoran: modify*/ ShouldNotReachHere(); _has_overflown = true; }
   void clear_has_overflown()     { _has_overflown = false; }
   bool restart_for_overflow()    { return _restart_for_overflow; }
 
@@ -544,13 +553,18 @@ public:
 
   G1ConcurrentMark(G1CollectedHeap* g1h,
                    G1RegionToSpaceMapper* prev_bitmap_storage,
-                   G1RegionToSpaceMapper* next_bitmap_storage);
+                   G1RegionToSpaceMapper* next_bitmap_storage,
+                   G1RegionToSpaceMapper* prev_black_bitmap_storage,
+                   G1RegionToSpaceMapper* next_black_bitmap_storage);
   ~G1ConcurrentMark();
 
   G1ConcurrentMarkThread* cm_thread() { return _cm_thread; }
 
   const G1CMBitMap* const prev_mark_bitmap() const { return _prev_mark_bitmap; }
   G1CMBitMap* next_mark_bitmap() const { return _next_mark_bitmap; }
+
+  const G1CMBitMap* const prev_black_mark_bitmap() const { return _prev_black_mark_bitmap; }
+  G1CMBitMap* next_black_mark_bitmap() const { return _next_black_mark_bitmap; }
 
   // Calculates the number of concurrent GC threads to be used in the marking phase.
   uint calc_active_marking_workers();
@@ -634,6 +648,7 @@ private:
 
 // A class representing a marking task.
 class G1CMTask : public TerminatorTerminator {
+  friend class G1CMBitMapClosure;
 private:
   enum PrivateConstants {
     // The regular clock call is called once the scanned words reaches
@@ -656,6 +671,7 @@ private:
   G1CollectedHeap*            _g1h;
   G1ConcurrentMark*           _cm;
   G1CMBitMap*                 _next_mark_bitmap;
+  G1CMBitMap*                 _next_black_mark_bitmap;
   // the task queue of this task
   G1CMTaskQueue*              _task_queue;
 
@@ -720,6 +736,17 @@ private:
 
   TruncatedSeq                _marking_step_diffs_ms;
 
+  uint _count_local_queue_page_local;
+  uint _count_local_queue_page_remote;
+  uint _count_scan_stat_0;
+  uint _count_scan_stat_1;
+  uint _count_scan;
+  uint _count_push_back;
+  // uint _count_global_queue_page_local;
+  // uint _count_global_queue_page_remote;
+  uint _count_bitmap_page_local;
+  uint _count_bitmap_page_remote;
+
   // Updates the local fields after this task has claimed
   // a new region to scan
   void setup_for_region(HeapRegion* hr);
@@ -761,7 +788,7 @@ public:
   // scanned.
   inline size_t scan_objArray(objArrayOop obj, MemRegion mr);
   // Resets the task; should be called right at the beginning of a marking phase.
-  void reset(G1CMBitMap* next_mark_bitmap);
+  void reset(G1CMBitMap* next_mark_bitmap, G1CMBitMap* next_black_mark_bitmap);
   // Clears all the fields that correspond to a claimed region.
   void clear_region_fields();
 
@@ -861,6 +888,33 @@ public:
   Pair<size_t, size_t> flush_mark_stats_cache();
   // Prints statistics associated with this task
   void print_stats();
+
+  void clear_memliner_stats(){
+    _count_local_queue_page_local = 0;
+    _count_local_queue_page_remote = 0;
+    _count_scan_stat_0 = 0;
+    _count_scan_stat_1 = 0;
+    _count_scan = 0;
+    _count_push_back = 0;
+    // _count_global_queue_page_local = 0;
+    // _count_global_queue_page_remote = 0;
+    _count_bitmap_page_local = 0;
+    _count_bitmap_page_remote = 0;
+  }
+
+  void print_memliner_stats(){
+    log_info(gc)(
+      "_count_local_queue_page_local: %u _count_local_queue_page_remote: %u _count_scan_stat_0: %u _count_scan_stat_1: %u _count_scan: %u _count_push_back: %u",
+      _count_local_queue_page_local, _count_local_queue_page_remote, _count_scan_stat_0, _count_scan_stat_1, _count_scan, _count_push_back
+    );
+    // log_info(gc)(
+    //   "_count_global_queue_page_local: %u _count_global_queue_page_remote: %u",
+    //   _count_global_queue_page_local, _count_global_queue_page_remote);
+    log_info(gc)(
+      "_count_bitmap_page_local: %u _count_bitmap_page_remote: %u",
+      _count_bitmap_page_local, _count_bitmap_page_remote);
+  }
+
 };
 
 // Class that's used to to print out per-region liveness

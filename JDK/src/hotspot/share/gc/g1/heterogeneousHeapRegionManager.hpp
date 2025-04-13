@@ -100,6 +100,8 @@ public:
   virtual void initialize(G1RegionToSpaceMapper* heap_storage,
                           G1RegionToSpaceMapper* prev_bitmap,
                           G1RegionToSpaceMapper* next_bitmap,
+                          G1RegionToSpaceMapper* prev_black_bitmap,
+                          G1RegionToSpaceMapper* next_black_bitmap,
                           G1RegionToSpaceMapper* bot,
                           G1RegionToSpaceMapper* cardtable,
                           G1RegionToSpaceMapper* card_counts);

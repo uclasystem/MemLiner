@@ -48,6 +48,67 @@ inline bool G1ConcurrentPrefetch::mark_in_next_bitmap(uint const worker_id, oop 
   return mark_in_next_bitmap(worker_id, hr, obj);
 }
 
+inline bool G1ConcurrentPrefetch::mark_black_in_next_bitmap(uint const worker_id, oop const obj) {
+  HeapRegion* const hr = _g1h->heap_region_containing(obj);
+  assert(hr != NULL, "just checking");
+  assert(hr->is_in_reserved(obj), "Attempting to mark object at " PTR_FORMAT " that is not contained in the given region %u", p2i(obj), hr->hrm_index());
+
+  if (hr->obj_allocated_since_next_marking(obj)) {
+    return false;
+  }
+
+  // Some callers may have stale objects to mark above nTAMS after humongous reclaim.
+  // Can't assert that this is a valid object at this point, since it might be in the process of being copied by another thread.
+  assert(!hr->is_continues_humongous(), "Should not try to mark object " PTR_FORMAT " in Humongous continues region %u above nTAMS " PTR_FORMAT, p2i(obj), hr->hrm_index(), p2i(hr->next_top_at_mark_start()));
+
+  HeapWord* const obj_addr = (HeapWord*)obj;
+
+  bool success = _cm->next_mark_bitmap()->par_mark(obj_addr);
+  OrderAccess::storestore();
+
+  if( success ){
+    _cm->next_black_mark_bitmap()->par_mark(obj_addr);
+  }
+
+  return success;
+}
+
+inline bool G1ConcurrentPrefetch::mark_prefetch_in_next_bitmap(uint const worker_id, oop const obj, G1PFTask* task) {
+  HeapRegion* const hr = _g1h->heap_region_containing(obj);
+  assert(hr != NULL, "just checking");
+  assert(hr->is_in_reserved(obj), "Attempting to mark object at " PTR_FORMAT " that is not contained in the given region %u", p2i(obj), hr->hrm_index());
+
+  if (hr->obj_allocated_since_next_marking(obj)) {
+    return false;
+  }
+
+  // Some callers may have stale objects to mark above nTAMS after humongous reclaim.
+  // Can't assert that this is a valid object at this point, since it might be in the process of being copied by another thread.
+  assert(!hr->is_continues_humongous(), "Should not try to mark object " PTR_FORMAT " in Humongous continues region %u above nTAMS " PTR_FORMAT, p2i(obj), hr->hrm_index(), p2i(hr->next_top_at_mark_start()));
+
+  HeapWord* const obj_addr = (HeapWord*)obj;
+
+  bool success = _cm->next_mark_bitmap()->par_mark(obj_addr);
+  OrderAccess::storestore();
+
+  if( success ){
+    _cm->next_black_mark_bitmap()->par_mark(obj_addr);
+  }
+
+
+  if (success) {
+    add_to_liveness(worker_id, obj, obj->size());
+    if(is_below_global_finger(obj)){
+      task->_count_prefetch_white += 1;
+    } else {
+      task->_count_prefetch_black += 1;
+    }
+  } else {
+    task->_count_prefetch_grey += 1;
+  }
+  return success;
+}
+
 inline bool G1ConcurrentPrefetch::mark_in_next_bitmap(uint const worker_id, HeapRegion* const hr, oop const obj) {
   assert(hr != NULL, "just checking");
   assert(hr->is_in_reserved(obj), "Attempting to mark object at " PTR_FORMAT " that is not contained in the given region %u", p2i(obj), hr->hrm_index());
@@ -66,6 +127,11 @@ inline bool G1ConcurrentPrefetch::mark_in_next_bitmap(uint const worker_id, Heap
   if (success) {
     add_to_liveness(worker_id, obj, obj->size());
   }
+
+  if( success ){
+    _cm->next_black_mark_bitmap()->par_mark(obj_addr);
+  }
+
   return success;
 }
 
@@ -103,7 +169,14 @@ inline void G1PFTask::push(G1TaskQueueEntry task_entry) {
   assert(task_entry.is_array_slice() || _next_mark_bitmap->is_marked((HeapWord*)task_entry.obj()), "invariant");
 
   if (!_task_queue->push(task_entry)) {
-    ShouldNotReachHere();
+    // ShouldNotReachHere();
+    move_entries_to_global_stack();
+
+    // this should succeed since, even if we overflow the global
+    // stack, we should have definitely removed some entries from the
+    // local queue. So, there must be space on it.
+    bool success = _task_queue->push(task_entry);
+    assert(success, "invariant");
   }
 }
 
@@ -157,6 +230,65 @@ inline void G1ConcurrentPrefetch::add_to_liveness(uint worker_id, oop const obj,
 
 inline bool G1PFTask::make_reference_grey(oop obj) {
   if (!_pf->mark_in_next_bitmap(_worker_id, obj)) {
+    return false;
+  }
+    G1TaskQueueEntry entry = G1TaskQueueEntry::from_oop(obj);
+    if (obj->is_typeArray()) {
+        // Immediately process arrays of primitive types, rather
+        // than pushing on the mark stack.  This keeps us from
+        // adding humongous objects to the mark stack that might
+        // be reclaimed before the entry is processed - see
+        // selection of candidates for eager reclaim of humongous
+        // objects.  The cost of the additional type test is
+        // mitigated by avoiding a trip through the mark stack,
+        // by only doing a bookkeeping update and avoiding the
+        // actual scan of the object - a typeArray contains no
+        // references, and the metadata is built-in.
+        process_grey_task_entry<false>(entry);
+    } else {
+        push(entry);
+    }
+  return true;
+}
+
+inline bool G1PFTask::make_reference_black(oop obj) {
+  if (!_pf->mark_black_in_next_bitmap(_worker_id, obj)) {
+    return false;
+  }
+    G1TaskQueueEntry entry = G1TaskQueueEntry::from_oop(obj);
+    if (obj->is_typeArray()) {
+        // Immediately process arrays of primitive types, rather
+        // than pushing on the mark stack.  This keeps us from
+        // adding humongous objects to the mark stack that might
+        // be reclaimed before the entry is processed - see
+        // selection of candidates for eager reclaim of humongous
+        // objects.  The cost of the additional type test is
+        // mitigated by avoiding a trip through the mark stack,
+        // by only doing a bookkeeping update and avoiding the
+        // actual scan of the object - a typeArray contains no
+        // references, and the metadata is built-in.
+        process_grey_task_entry<false>(entry);
+    } else {
+        push(entry);
+    }
+  return true;
+}
+
+inline bool G1ConcurrentPrefetch::is_below_global_finger(oop obj) const {
+  // If obj is above the global finger, then the mark bitmap scan
+  // will find it later, and no push is needed.  Similarly, if we have
+  // a current region and obj is between the local finger and the
+  // end of the current region, then no push is needed.  The tradeoff
+  // of checking both vs only checking the global finger is that the
+  // local check will be more accurate and so result in fewer pushes,
+  // but may also be a little slower.
+  HeapWord* global_finger = _cm->finger();
+  HeapWord* objAddr = cast_from_oop<HeapWord*>(obj);
+  return objAddr < global_finger;
+}
+
+inline bool G1PFTask::make_prefetch_reference_black(oop obj) {
+  if (!_pf->mark_prefetch_in_next_bitmap(_worker_id, obj, this)) {
     return false;
   }
     G1TaskQueueEntry entry = G1TaskQueueEntry::from_oop(obj);
